@@ -4,6 +4,7 @@ package parser
 
 import "encoding/json"
 import "fmt"
+import "reflect"
 
 // Definition of an AWS CLI detonation
 type AwsCliDetonatorSchemaJson struct {
@@ -77,11 +78,94 @@ type RemoteDetonatorSchemaJson struct {
 	Commands []string `json:"commands,omitempty,omitzero" yaml:"commands,omitempty" mapstructure:"commands,omitempty"`
 }
 
+// Matcher for Splunk events
+type SplunkLogSchemaJson struct {
+	// Indexes searched by the default correlation query. Ignored when query is set.
+	// Defaults to index=*.
+	Indexes []string `json:"indexes,omitempty,omitzero" yaml:"indexes,omitempty" mapstructure:"indexes,omitempty"`
+
+	// Raw SPL query. Supports the <% .CorrelationID %> marker to embed the detonation
+	// UUID. A leading 'search' command is added when the query does not start with
+	// 'search' or '|'. If omitted, a default fulltext correlation query is used.
+	Query *string `json:"query,omitempty,omitzero" yaml:"query,omitempty" mapstructure:"query,omitempty"`
+}
+
 // Definition of a Stratus Red Team detonator
 type StratusRedTeamDetonatorSchemaJson struct {
 	// Attack technique ID of the Stratus Red Team technique to detonate (per
 	// https://stratus-red-team.cloud/attack-techniques/list/)
 	AttackTechnique *string `json:"attackTechnique,omitempty,omitzero" yaml:"attackTechnique,omitempty" mapstructure:"attackTechnique,omitempty"`
+}
+
+// Matcher for a TheHive alert
+type TheHiveAlertSchemaJson struct {
+	// How an alert is tied to the detonation. 'uuid' looks for the detonation UUID in
+	// observables and the description. 'host' is for telemetry that cannot carry the
+	// UUID (e.g. flightsim network traffic): it matches alerts created after the run
+	// started with an observable equal to one of the addresses in
+	// THEHIVE_DETONATION_HOSTS. Requires title.
+	Correlation TheHiveAlertSchemaJsonCorrelation `json:"correlation,omitempty,omitzero" yaml:"correlation,omitempty" mapstructure:"correlation,omitempty"`
+
+	// Only look for the detonation UUID in observables tagged
+	// 'field:<observableField>', the tag TA-thehive-cortex sets from the Splunk field
+	// name. If omitted, every observable and the alert description are searched.
+	ObservableField *string `json:"observableField,omitempty,omitzero" yaml:"observableField,omitempty" mapstructure:"observableField,omitempty"`
+
+	// Source of the TheHive alert to match on (exact match), e.g. 'splunk'
+	Source *string `json:"source,omitempty,omitzero" yaml:"source,omitempty" mapstructure:"source,omitempty"`
+
+	// Title of the TheHive alert to match on (exact match). With the
+	// TA-thehive-cortex alert action and the default '<inheritance>' title, this is
+	// the Splunk saved search name. Required when discover is false.
+	Title *string `json:"title,omitempty,omitzero" yaml:"title,omitempty" mapstructure:"title,omitempty"`
+}
+
+type TheHiveAlertSchemaJsonCorrelation string
+
+const TheHiveAlertSchemaJsonCorrelationHost TheHiveAlertSchemaJsonCorrelation = "host"
+const TheHiveAlertSchemaJsonCorrelationUuid TheHiveAlertSchemaJsonCorrelation = "uuid"
+
+var enumValues_TheHiveAlertSchemaJsonCorrelation = []interface{}{
+	"uuid",
+	"host",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *TheHiveAlertSchemaJsonCorrelation) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_TheHiveAlertSchemaJsonCorrelation {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_TheHiveAlertSchemaJsonCorrelation, v)
+	}
+	*j = TheHiveAlertSchemaJsonCorrelation(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *TheHiveAlertSchemaJson) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain TheHiveAlertSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["correlation"]; !ok || v == nil {
+		plain.Correlation = "uuid"
+	}
+	*j = TheHiveAlertSchemaJson(plain)
+	return nil
 }
 
 // Schema for a Threatest test suite
@@ -137,6 +221,12 @@ type ThreatestSchemaJsonScenariosElemExpectationsElem struct {
 	// ElasticSecuritySignal corresponds to the JSON schema field
 	// "elasticSecuritySignal".
 	ElasticSecuritySignal *ElasticSecuritySignalSchemaJson `json:"elasticSecuritySignal,omitempty,omitzero" yaml:"elasticSecuritySignal,omitempty" mapstructure:"elasticSecuritySignal,omitempty"`
+
+	// SplunkLog corresponds to the JSON schema field "splunkLog".
+	SplunkLog *SplunkLogSchemaJson `json:"splunkLog,omitempty,omitzero" yaml:"splunkLog,omitempty" mapstructure:"splunkLog,omitempty"`
+
+	// TheHiveAlert corresponds to the JSON schema field "theHiveAlert".
+	TheHiveAlert *TheHiveAlertSchemaJson `json:"theHiveAlert,omitempty,omitzero" yaml:"theHiveAlert,omitempty" mapstructure:"theHiveAlert,omitempty"`
 
 	// The maximal time to wait for the assertion, written as a Go duration (e.g. 5m)
 	Timeout string `json:"timeout,omitempty,omitzero" yaml:"timeout,omitempty" mapstructure:"timeout,omitempty"`

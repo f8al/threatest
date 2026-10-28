@@ -89,6 +89,16 @@
                   "required": [
                     "datadogEvent"
                   ]
+                },
+                {
+                  "required": [
+                    "splunkLog"
+                  ]
+                },
+                {
+                  "required": [
+                    "theHiveAlert"
+                  ]
                 }
               ],
               "properties": {
@@ -103,6 +113,12 @@
                 },
                 "datadogEvent": {
                   "$ref": "datadogEvent.schema.json"
+                },
+                "splunkLog": {
+                  "$ref": "splunkLog.schema.json"
+                },
+                "theHiveAlert": {
+                  "$ref": "theHiveAlert.schema.json"
                 },
                 "timeout": {
                   "type": "string",

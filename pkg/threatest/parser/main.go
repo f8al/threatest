@@ -9,6 +9,8 @@ import (
 	"github.com/datadog/threatest/pkg/threatest/matchers/datadog/logs"
 	"github.com/datadog/threatest/pkg/threatest/matchers/datadog/signals"
 	"github.com/datadog/threatest/pkg/threatest/matchers/elastic"
+	"github.com/datadog/threatest/pkg/threatest/matchers/splunk"
+	"github.com/datadog/threatest/pkg/threatest/matchers/thehive"
 	"sigs.k8s.io/yaml" // we use this library as it provides a handy "YAMLToJSON" function
 	"strings"
 	"time"
@@ -138,6 +140,35 @@ func buildAssertions(parsedScenario *ThreatestSchemaJsonScenariosElem, scenario 
 				opts = append(opts, agentevents.WithQuery(*datadogEventMatcher.Query))
 			}
 			addAssertion(scenario, agentevents.DatadogAgentEvent(opts...), parsedAssertion, derefStr(datadogEventMatcher.Query))
+		}
+		if splunkMatcher := parsedAssertion.SplunkLog; splunkMatcher != nil {
+			var opts []splunk.Option
+			if splunkMatcher.Query != nil {
+				opts = append(opts, splunk.WithQuery(*splunkMatcher.Query))
+			}
+			if len(splunkMatcher.Indexes) > 0 {
+				opts = append(opts, splunk.WithIndexes(splunkMatcher.Indexes...))
+			}
+			addAssertion(scenario, splunk.SplunkLog(opts...), parsedAssertion, derefStr(splunkMatcher.Query))
+		}
+		if theHiveMatcher := parsedAssertion.TheHiveAlert; theHiveMatcher != nil {
+			if (theHiveMatcher.Title == nil || *theHiveMatcher.Title == "") && !parsedAssertion.Discover {
+				return fmt.Errorf("scenario '%s': theHiveAlert.title is required when discover is false", parsedScenario.Name)
+			}
+			var opts []thehive.Option
+			if source := theHiveMatcher.Source; source != nil {
+				opts = append(opts, thehive.WithSource(*source))
+			}
+			if field := theHiveMatcher.ObservableField; field != nil {
+				opts = append(opts, thehive.WithObservableField(*field))
+			}
+			if theHiveMatcher.Correlation == thehive.CorrelationHost {
+				if parsedAssertion.Discover {
+					return fmt.Errorf("scenario '%s': theHiveAlert host correlation is not supported with discover: true", parsedScenario.Name)
+				}
+				opts = append(opts, thehive.WithHostCorrelation())
+			}
+			addAssertion(scenario, thehive.TheHiveAlert(derefStr(theHiveMatcher.Title), opts...), parsedAssertion, "")
 		}
 	}
 	return nil

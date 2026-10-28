@@ -37,6 +37,8 @@ Supported matchers:
 - Datadog logs
 - Datadog agent events (CWS runtime events)
 - Elastic Security signals
+- Splunk events (`splunkLog`)
+- TheHive alerts (`theHiveAlert`), e.g. created by a Splunk detection through the TA-thehive-cortex alert action
 
 ### Detonation and alert correlation
 
@@ -154,6 +156,64 @@ scenarios:
         datadogSecuritySignal:
           name: "Potential administrative port open to the world via AWS security group"
 ```
+
+- Asserting telemetry in Splunk and the resulting alert in TheHive
+
+```yaml
+scenarios:
+  - name: aws cloudtrail stop logging
+    detonate:
+      stratusRedTeamDetonator:
+        attackTechnique: aws.defense-evasion.cloudtrail-stop
+    expectations:
+      # The scenario timeout is taken from the first expectation, so put the
+      # longest one first. It must cover the saved search schedule, the ingest
+      # lag, the alert action and TheHive ingestion.
+      - timeout: 30m
+        theHiveAlert:
+          title: "AWS Defense Evasion Stop Logging Cloudtrail"
+          source: splunk
+      # Telemetry presence: fails if the detonation never reached Splunk.
+      - timeout: 30m
+        splunkLog:
+          query: 'index=aws_cloudtrail "<% .CorrelationID %>"'
+```
+
+When both expectations fail, the telemetry never reached Splunk. When only `theHiveAlert` fails, the detection or the alert action broke.
+
+`splunkLog` runs a oneshot search on the Splunk management port (usually 8089) over the past hour. Without `query`, it searches `index=*` (or the listed `indexes`) for the quoted detonation UUID. It never cleans anything up.
+
+`theHiveAlert` lists alerts created in the past hour with the given `title` (and `source`, when set), then looks for the detonation UUID as a substring of each alert's observables and description. The UUID is usually embedded in a longer value such as a user agent. `observableField: <name>` restricts the search to observables tagged `field:<name>`, the tag TA-thehive-cortex sets from the Splunk field name. Cleanup moves every open alert referencing the UUID to `THEHIVE_CLOSED_STATUS` (default `Other`), which must be an existing status in the Closed stage, and adds the `THEHIVE_CLEANUP_TAG` tag (default `Control Validation`). Exclude that tag from notifications, Functions and responders that trigger on alert updates.
+
+Telemetry from some detonations cannot carry the UUID. For example, network traffic from flightsim run over the remote detonator only has the UUID in its parent process name. For those, set `correlation: host`. The matcher then looks for alerts with the given `title`, created after the run started, that have an observable exactly equal to one of the addresses in `THEHIVE_DETONATION_HOSTS` (for example `10.0.0.5,egress-01`). Combine it with `observableField` (e.g. `src_ip`) to ignore the host when it only appears as a destination. Host correlation is weaker than UUID correlation, so run detonations from a dedicated host whose addresses nothing else uses. Cleanup then only closes alerts with the expected title.
+
+```yaml
+      - timeout: 30m
+        theHiveAlert:
+          title: "DNS Tunneling via High Volume Unique Subdomains"
+          source: splunk
+          correlation: host
+          observableField: src_ip
+```
+
+When using TA-thehive-cortex 3.2:
+- Only fields listed in `lookups/thehive_datatypes.csv` with `field_type=observable` become observables, and the "All fields" scope does not work. Map the field that carries the UUID explicitly, or enable "append results" with "keep observables" so it lands in the description.
+- Leave the "Unique ID field" empty. A stable value makes TheHive reject later alerts as duplicates of the same type, source and sourceRef.
+
+| Variable | Matcher | Description |
+|---|---|---|
+| `SPLUNK_URL` | `splunkLog` | Management URL, e.g. `https://splunk.example.com:8089` |
+| `SPLUNK_TOKEN` | `splunkLog` | Splunk authentication token (needs the search capability on the target indexes) |
+| `SPLUNK_CA_CERT` | `splunkLog` | Optional PEM bundle for a private CA |
+| `SPLUNK_INSECURE_SKIP_VERIFY` | `splunkLog` | `true` disables certificate verification. Lab use only; prefer `SPLUNK_CA_CERT` |
+| `THEHIVE_URL` | `theHiveAlert` | e.g. `https://thehive.example.com` |
+| `THEHIVE_API_KEY` | `theHiveAlert` | API key (needs alert read and `manageAlert/update`) |
+| `THEHIVE_ORGANISATION` | `theHiveAlert` | Optional, sent as `X-Organisation`. Defaults to the user's default organisation |
+| `THEHIVE_CLOSED_STATUS` | `theHiveAlert` | Closed-stage alert status set during cleanup. Defaults to `Other` |
+| `THEHIVE_CLEANUP_TAG` | `theHiveAlert` | Tag added during cleanup. Defaults to `Control Validation`; set it to an empty string to add no tag |
+| `THEHIVE_DETONATION_HOSTS` | `theHiveAlert` | Comma-separated addresses of the detonation host, for `correlation: host` |
+| `THEHIVE_CA_CERT` | `theHiveAlert` | Optional PEM bundle for a private CA |
+| `THEHIVE_INSECURE_SKIP_VERIFY` | `theHiveAlert` | `true` disables certificate verification. Lab use only |
 
 You can output the test results to a JSON file:
 

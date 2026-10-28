@@ -1,7 +1,12 @@
 package parser
 
 import (
+	"fmt"
+	"github.com/datadog/threatest/pkg/threatest/matchers/splunk"
+	"github.com/datadog/threatest/pkg/threatest/matchers/thehive"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 )
 
@@ -216,4 +221,111 @@ scenarios:
 	assert.Nil(t, scenarios)
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "datadogSecuritySignal.name is required when discover is false")
+}
+
+func TestParserParsesSplunkAndTheHiveBlocks(t *testing.T) {
+	yamlInput := `
+scenarios:
+  - name: aws cloudtrail stop logging
+    detonate:
+      stratusRedTeamDetonator:
+        attackTechnique: aws.defense-evasion.cloudtrail-stop
+    expectations:
+      - timeout: 30m
+        theHiveAlert:
+          title: "AWS Defense Evasion Stop Logging Cloudtrail"
+          source: splunk
+          observableField: userAgent
+      - timeout: 30m
+        splunkLog:
+          query: 'index=aws_cloudtrail "<% .CorrelationID %>"'
+        discover: true
+      - splunkLog:
+          indexes: [aws_cloudtrail]
+`
+	scenarios, err := Parse([]byte(yamlInput), "", "", "")
+	require.NoError(t, err)
+	require.Len(t, scenarios, 1)
+
+	assertions := scenarios[0].TelemetryAssertions
+	require.Len(t, assertions, 3)
+
+	alert := assertions[0].Matcher.(*thehive.TheHiveAlertGeneratedAssertionBuilder)
+	assert.Equal(t, "AWS Defense Evasion Stop Logging Cloudtrail", alert.AlertFilter.Title)
+	assert.Equal(t, "splunk", alert.AlertFilter.Source)
+	assert.Equal(t, "userAgent", alert.AlertFilter.ObservableField)
+	assert.False(t, assertions[0].Discover)
+
+	discovery := assertions[1].Matcher.(*splunk.Builder)
+	assert.True(t, assertions[1].Discover)
+	assert.Equal(t, `index=aws_cloudtrail "<% .CorrelationID %>"`, assertions[1].Query)
+	assert.Equal(t, `index=aws_cloudtrail "<% .CorrelationID %>"`, discovery.Filter.Query)
+
+	presence := assertions[2].Matcher.(*splunk.Builder)
+	assert.Equal(t, []string{"aws_cloudtrail"}, presence.Filter.Indexes)
+}
+
+func TestParserRejectsMissingTheHiveTitle(t *testing.T) {
+	yamlInput := `
+scenarios:
+  - name: missing title
+    detonate:
+      localDetonator:
+        commands: ["echo hi"]
+    expectations:
+      - timeout: 1m
+        theHiveAlert:
+          source: splunk
+`
+	scenarios, err := Parse([]byte(yamlInput), "", "", "")
+	assert.Nil(t, scenarios)
+	assert.ErrorContains(t, err, "theHiveAlert.title is required when discover is false")
+}
+
+func TestParserAllowsTheHiveDiscoverWithoutTitle(t *testing.T) {
+	yamlInput := `
+scenarios:
+  - name: discover alerts
+    detonate:
+      localDetonator:
+        commands: ["echo hi"]
+    expectations:
+      - timeout: 1m
+        theHiveAlert:
+          source: splunk
+        discover: true
+`
+	scenarios, err := Parse([]byte(yamlInput), "", "", "")
+	require.NoError(t, err)
+	assert.True(t, scenarios[0].TelemetryAssertions[0].Discover)
+}
+
+func TestParserTheHiveHostCorrelation(t *testing.T) {
+	base := `
+scenarios:
+  - name: dns tunneling
+    detonate:
+      remoteDetonator:
+        commands: ["flightsim run tunnel-dns -fast"]
+    expectations:
+      - timeout: 30m
+        theHiveAlert:
+          title: "DNS Tunneling via High Volume Unique Subdomains"
+          correlation: %s
+`
+	scenarios, err := Parse([]byte(fmt.Sprintf(base, "host")), "host", "user", "")
+	require.NoError(t, err)
+	alert := scenarios[0].TelemetryAssertions[0].Matcher.(*thehive.TheHiveAlertGeneratedAssertionBuilder)
+	assert.Equal(t, thehive.CorrelationHost, alert.AlertFilter.Correlation)
+
+	scenarios, err = Parse([]byte(strings.Replace(fmt.Sprintf(base, "uuid"), "          correlation: uuid\n", "", 1)), "host", "user", "")
+	require.NoError(t, err)
+	alert = scenarios[0].TelemetryAssertions[0].Matcher.(*thehive.TheHiveAlertGeneratedAssertionBuilder)
+	assert.Equal(t, thehive.CorrelationUUID, alert.AlertFilter.Correlation)
+
+	_, err = Parse([]byte(fmt.Sprintf(base, "ip")), "host", "user", "")
+	assert.Error(t, err)
+
+	_, err = Parse([]byte(fmt.Sprintf(base, "host")+"        discover: true\n"), "host", "user", "")
+	assert.ErrorContains(t, err, "host correlation is not supported with discover: true")
 }

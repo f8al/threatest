@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "description": "Matcher for Splunk events",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Raw SPL query. Supports the <% .CorrelationID %> marker to embed the detonation UUID. A leading 'search' command is added when the query does not start with 'search' or '|'. If omitted, a default fulltext correlation query is used."
+    },
+    "indexes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Indexes searched by the default correlation query. Ignored when query is set. Defaults to index=*."
+    }
+  }
+}

@@ -24,6 +24,8 @@ mocks:
 	mockery --name=LogsAPI --dir pkg/threatest/matchers/datadog/logs --output pkg/threatest/matchers/datadog/logs/mocks
 	mockery --name=EventsAPI --dir pkg/threatest/matchers/datadog/agentevents --output pkg/threatest/matchers/datadog/agentevents/mocks
 	mockery --name=ElasticSecurityDetectionAlertsAPI --dir pkg/threatest/matchers/elastic --output pkg/threatest/matchers/elastic/mocks
+	mockery --name=SearchAPI --dir pkg/threatest/matchers/splunk --output pkg/threatest/matchers/splunk/mocks
+	mockery --name=TheHiveAlertsAPI --dir pkg/threatest/matchers/thehive --output pkg/threatest/matchers/thehive/mocks
 
 parser:
 	go get github.com/atombender/go-jsonschema/...
