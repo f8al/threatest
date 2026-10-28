@@ -93,6 +93,8 @@ $ export THREATEST_SSH_USERNAME=vagrant
 $ threatest run scenarios.threatest.yaml
 ```
 
+Remote detonation verifies the SSH host key, as OpenSSH does. The host must have an entry in `known_hosts`: by default the `UserKnownHostsFile` from `~/.ssh/config`, which is `~/.ssh/known_hosts` if unset, or the files listed in `THREATEST_SSH_KNOWN_HOSTS` (space-separated). The easiest way to add one is to connect once with `ssh test-box` and check the fingerprint it shows against the host's own `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`. Threatest fails rather than trust an unknown or changed key. The private key comes from `--ssh-key`, `THREATEST_SSH_KEY` or the host's `IdentityFile`. It must be unencrypted; `ssh-agent` is not used.
+
 **Sample scenario definition files**
 
 - Detonating over SSH

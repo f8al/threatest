@@ -1,15 +1,18 @@
 package detonators
 
 import (
+	"errors"
 	"fmt"
 	"github.com/hashicorp/go-uuid"
 	"github.com/kevinburke/ssh_config"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"net"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -71,16 +74,22 @@ func (m *SSHCommandExecutor) init() error {
 		return fmt.Errorf("unable to parse private key file at %s: %v", sshKey, err)
 	}
 
+	sshAddress := net.JoinHostPort(realHostname, strconv.Itoa(sshPort))
+	hostKeyCallback, hostKeyAlgorithms, err := hostKeyVerification(knownHostsFiles(m.SSHHostname), sshAddress)
+	if err != nil {
+		return err
+	}
+
 	var config = &ssh.ClientConfig{
-		Config:          ssh.Config{},
-		User:            sshUser,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil }),
-		Timeout:         10 * time.Second,
+		Config:            ssh.Config{},
+		User:              sshUser,
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback:   hostKeyCallback,
+		HostKeyAlgorithms: hostKeyAlgorithms,
+		Timeout:           10 * time.Second,
 	}
 
 	log.Info("Connecting over SSH")
-	sshAddress := net.JoinHostPort(realHostname, strconv.Itoa(sshPort))
 	conn, err := ssh.Dial("tcp", sshAddress, config)
 	if err != nil {
 		return fmt.Errorf("unable to establish SSH connection to %s: %v", sshAddress, err)
@@ -135,3 +144,74 @@ func resolveSSHKeyPath(path string) (string, error) {
 	}
 	return filepath.Abs(path)
 }
+
+// knownHostsFiles returns the known_hosts files to verify host keys against:
+// THREATEST_SSH_KNOWN_HOSTS when set, else UserKnownHostsFile from the SSH
+// config for this host (by default ~/.ssh/known_hosts ~/.ssh/known_hosts2).
+func knownHostsFiles(sshHostname string) []string {
+	files := os.Getenv("THREATEST_SSH_KNOWN_HOSTS")
+	if files == "" {
+		files = ssh_config.Get(sshHostname, "UserKnownHostsFile")
+	}
+	return strings.Fields(files)
+}
+
+// hostKeyVerification builds a host key callback from the known_hosts files
+// that exist, and the host key algorithms known for address, so the server is
+// only asked for key types that can be verified. It fails when address has no
+// entry, rather than trusting the first key it sees.
+func hostKeyVerification(files []string, address string) (ssh.HostKeyCallback, []string, error) {
+	var existing []string
+	for _, file := range files {
+		path, err := resolveSSHKeyPath(file)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to resolve known_hosts path %s: %v", file, err)
+		}
+		if _, err := os.Stat(path); err == nil {
+			existing = append(existing, path)
+		}
+	}
+	if len(existing) == 0 {
+		return nil, nil, fmt.Errorf("no known_hosts file found among %v: add the detonation host's key, after checking its fingerprint, before running remote detonations", files)
+	}
+
+	callback, err := knownhosts.New(existing...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to read known_hosts: %v", err)
+	}
+
+	// Probing with a key that matches nothing makes knownhosts list the keys
+	// it holds for this host.
+	var keyErr *knownhosts.KeyError
+	probeErr := callback(address, &net.TCPAddr{IP: net.IPv4zero}, probeKey{})
+	if !errors.As(probeErr, &keyErr) || len(keyErr.Want) == 0 {
+		return nil, nil, fmt.Errorf("host %s is not in known_hosts (%s): add its key, after checking its fingerprint, before running remote detonations", address, strings.Join(existing, ", "))
+	}
+
+	var algorithms []string
+	for _, known := range keyErr.Want {
+		for _, algorithm := range algorithmsForKeyType(known.Key.Type()) {
+			if !slices.Contains(algorithms, algorithm) {
+				algorithms = append(algorithms, algorithm)
+			}
+		}
+	}
+	return callback, algorithms, nil
+}
+
+// algorithmsForKeyType maps a known_hosts key type to the host key signature
+// algorithms that verify against it. An ssh-rsa key also verifies the SHA-2
+// signatures current servers prefer.
+func algorithmsForKeyType(keyType string) []string {
+	if keyType == ssh.KeyAlgoRSA {
+		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA}
+	}
+	return []string{keyType}
+}
+
+// probeKey is a public key that matches no known_hosts entry.
+type probeKey struct{}
+
+func (probeKey) Type() string                            { return "threatest-probe" }
+func (probeKey) Marshal() []byte                         { return []byte("threatest-probe") }
+func (probeKey) Verify(_ []byte, _ *ssh.Signature) error { return errors.New("probe key") }
