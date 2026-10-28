@@ -17,22 +17,7 @@ builds:
 
     dir: cmd/threatest
     binary: threatest
-brews:
-  - name: threatest
-    repository:
-      owner: datadog
-      name: threatest
-      branch: "homebrew-update-{{ .Version }}"
-      pull_request:
-        enabled: true
-        base:
-          owner: datadog
-          name: threatest
-          branch: main
-    directory: Formula
-    url_template: "https://github.com/DataDog/threatest/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    license: Apache-2.0
-    homepage: "https://github.com/DataDog/threatest"
+# Fork: no Homebrew formula. Upstream's opens pull requests on datadog/threatest.
 archives:
   - name_template: >-
       {{ .ProjectName }}_

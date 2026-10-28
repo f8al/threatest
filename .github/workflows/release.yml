@@ -10,18 +10,12 @@ permissions: {}
 jobs:
   goreleaser:
     timeout-minutes: 120
-    runs-on:
-      group: Large Runner Shared Public
-      labels: ubuntu-16-core-latest
+    # Fork: GitHub-hosted runner and the workflow token instead of DataDog's
+    # runner group and octo-sts, which only exist in the upstream org.
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
-      contents: read
+      contents: write
     steps:
-      - uses: DataDog/dd-octo-sts-action@96a25462dbcb10ebf0bfd6e2ccc917d2ab235b9a # v1.0.4
-        id: octo-sts
-        with:
-          scope: DataDog/threatest
-          policy: self.release.create-pr
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -44,4 +38,4 @@ jobs:
           version: "~> v2"
           args: release --clean --config .goreleaser.yaml --timeout 110m0s --verbose --parallelism 2
         env:
-          GITHUB_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
